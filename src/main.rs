@@ -1,11 +1,11 @@
 #![no_std]
 #![no_main]
 
+mod led_grid;
 mod noline_async;
 mod usb;
 
 use core::cell::RefCell;
-use core::sync::atomic::{ AtomicU32, Ordering};
 
 use defmt::{info, unwrap};
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
@@ -39,7 +39,6 @@ use crc16_umts_fast;
 //use fixed_macro::types::U56F8;
 //use embassy_rp::pio::{Common, InterruptHandler, Irq, Pio, PioPin, ShiftDirection, StateMachine};
 
-static SHARED: AtomicU32 = AtomicU32::new(0);
 const FLASH_SIZE: usize = 2 * 1024 * 1024;
 
 bind_interrupts!(struct Irqs {
@@ -277,122 +276,6 @@ async fn canbus(spi_bus: Mutex<NoopRawMutex, RefCell<Spi<'static, embassy_rp::pe
 }
 
 
-/*
-fn setup_pio_task<'a>(pio: &mut Common<'a, PIO0>, sm: &mut StateMachine<'a, PIO0, 0>, pin1: impl PioPin, pin2: impl PioPin) {
-    // Setup sm0
-
-    // Send data serially to pin
-    let prg = pio_proc::pio_asm!(
-        "set pindirs, 0b101",
-        ".wrap_target",
-        "out pins, 0b100 [19]",
-        "out pins, 0b001 [19]",
-        ".wrap",
-    );
-
-    let mut cfg = embassy_rp::pio::Config::default();
-    cfg.use_program(&pio.load_program(&prg.program), &[]);
-    let out_pin1 = pio.make_pio_pin(pin1);
-    let out_pin2 = pio.make_pio_pin(pin2);
-    cfg.set_out_pins(&[&out_pin1, &out_pin2]);
-    cfg.set_set_pins(&[&out_pin1, &out_pin2]);
-    cfg.clock_divider = (U56F8!(125_000_000) / 20 / 200).to_fixed();
-    cfg.shift_out.auto_fill = true;
-    sm.set_config(&cfg);
-}
-
-#[embassy_executor::task]
-async fn pio_task_sm0(mut sm: StateMachine<'static, PIO0, 0>) {
-    sm.set_enable(true);
-
-    let mut v = 0x0f0caffa;
-    loop {
-        sm.tx().wait_push(v).await;
-        v ^= 0xffff;
-        info!("Pushed {:032b} to FIFO", v);
-    }
-}
-*/
-
-#[embassy_executor::task(pool_size=4)]
-async fn led_grid(mut pin1: Flex<'static>, mut pin2: Flex<'static>, mut pin3: Flex<'static>, mut pin4: Flex<'static>, mut pin5: Flex<'static>) {
-
-    loop {
-        let val = SHARED.load(Ordering::Relaxed);
-
-        for i in 0..=4 {
-            let (base, mut l1, mut l2, mut l3, mut l4) = match i {
-                0 => (&mut pin1, &mut pin2, &mut pin3, &mut pin4, &mut pin5),
-                1 => (&mut pin2, &mut pin1, &mut pin3, &mut pin4, &mut pin5),
-                2 => (&mut pin3, &mut pin1, &mut pin2, &mut pin4, &mut pin5),
-                3 => (&mut pin4, &mut pin1, &mut pin2, &mut pin3, &mut pin5),
-                4 => (&mut pin5, &mut pin1, &mut pin2, &mut pin3, &mut pin4),
-                _ => (&mut pin1, &mut pin2, &mut pin3, &mut pin4, &mut pin5) // to make the compiler happy until I learn this better
-            };
-
-            base.set_low();
-            base.set_as_output();
-            //log::info!("val {}, start_idx: {}, l1: {}, l2: {}, l3: {}, l4: {}", val, start_idx, (1 << start_idx) & val, (1 << (start_idx + 1)) & val, (1 << (start_idx + 2)) & val, (1 << (start_idx + 3)) & val);
-
-            for j in 0..=3 {
-                l1.set_as_input();
-                l2.set_as_input();
-                l3.set_as_input();
-                l4.set_as_input();
-
-                let out = match j {
-                    0 => &mut l1,
-                    1 => &mut l2,
-                    2 => &mut l3,
-                    3 => &mut l4,
-                    _ => &mut l1,
-                };
-
-                if (1 << ((i * 4) + j)) & val != 0 {
-                    out.set_as_output();
-                    out.set_high();
-                }
-                Timer::after_nanos(25).await;
-                out.set_as_input();
-            }
-
-            /*
-            if (1 << start_idx) & val != 0 {
-                l1.set_as_output();
-                l1.set_high();
-            } else {
-                l1.set_as_input();
-            }
-            if (1 << (start_idx + 1)) & val != 0 {
-                l2.set_as_output();
-                l2.set_high();
-            } else {
-                l2.set_as_input();
-            }
-            if (1 << (start_idx + 2)) & val != 0 {
-                l3.set_as_output();
-                l3.set_high();
-            } else {
-                l3.set_as_input();
-            }
-            if (1 << (start_idx + 3)) & val != 0 {
-                l4.set_as_output();
-                l4.set_high();
-            } else {
-                l4.set_as_input();
-            }
-            */
-            Timer::after_nanos(100).await;
-            base.set_as_input();
-            l1.set_as_input();
-            l2.set_as_input();
-            l3.set_as_input();
-            l4.set_as_input();
-            //Timer::after_millis(200).await;
-        }
-    }
-}
-
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
@@ -425,7 +308,7 @@ async fn main(spawner: Spawner) {
     let cp4 = Flex::new(p.PIN_8);
     let cp5 = Flex::new(p.PIN_9);
 
-    unwrap!(spawner.spawn(led_grid(cp1, cp2, cp3, cp4, cp5)));
+    unwrap!(spawner.spawn(led_grid::led_grid(cp1, cp2, cp3, cp4, cp5)));
 
     //cp1.set_high();
     //cp2.set_low();
@@ -584,7 +467,8 @@ async fn main(spawner: Spawner) {
          */
 
         //let rand = (1 << (counter % 20));
-        SHARED.store(rand % 1048576, Ordering::Relaxed);
+        //SHARED.store(rand % 1048576, Ordering::Relaxed);
+        led_grid::set_leds(rand % 1048576);
 
         //Timer::after_secs(1).await;
         Timer::after_millis(250).await;
