@@ -1,14 +1,13 @@
 #![no_std]
 #![no_main]
 
+mod can;
 mod led_grid;
 mod noline_async;
 mod usb;
 
 use core::cell::RefCell;
-
 use defmt::{info, unwrap};
-use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::RoscRng;
@@ -20,12 +19,13 @@ use embassy_rp::peripherals::I2C0;
 use embassy_rp::uart;
 //use embassy_rp::rom_data::reset_to_usb_boot;
 
-use embassy_sync::blocking_mutex::{Mutex, raw::NoopRawMutex};
+//use embassy_sync::blocking_mutex::{Mutex, raw::NoopRawMutex};
+use embassy_sync::blocking_mutex::Mutex;
 
-use embedded_can::{ExtendedId, Frame, Id};
-use mcp2515::{error::Error, frame::CanFrame, regs::OpMode, CanSpeed, McpSpeed, MCP2515, Settings};
+//use embedded_can::{ExtendedId, Frame, Id};
+//use mcp2515::{error::Error, frame::CanFrame, regs::OpMode, CanSpeed, McpSpeed, MCP2515, Settings};
 
-use embassy_time::{Delay, Duration, Timer};
+use embassy_time::{Duration, Timer};
 use rand::RngCore;
 
 use {defmt_rtt as _, panic_probe as _}; // global logger
@@ -207,75 +207,6 @@ async fn data_panel(mut cs: Output<'static>, mut spi: Spi<'static, embassy_rp::p
     }
 }
 
-// SpiDevice<'static, NoopRawMutex, Spi<'static, embassy_rp::peripherals::SPI0, spi::Blocking>, Output<'static>>
-#[embassy_executor::task]
-async fn canbus(spi_bus: Mutex<NoopRawMutex, RefCell<Spi<'static, embassy_rp::peripherals::SPI0, spi::Blocking>>>, cs: Output<'static>, mut reset: Output<'static>) {
-    //let spi_device = ExclusiveDevice::new_no_delay(spi, spi_cs);
-    let can_spi = SpiDevice::new(&spi_bus, cs);
-    let mut can = MCP2515::new(can_spi);
-
-    let mut delay = Delay;
-
-    log::info!("Starting canbus");
-
-    // Reset The Device
-    reset.set_low();
-    Timer::after_millis(10).await;
-    reset.set_high();
-
-    // Initialize The Device
-    match can.init(
-        &mut delay,
-        Settings {
-            mode: OpMode::Loopback,         // Loopback for testing and example
-            can_speed: CanSpeed::Kbps1000,  // Many options supported.
-            mcp_speed: McpSpeed::MHz16,     // Currently 16MHz and 8MHz chips are supported.
-            clkout_en: false,
-        },
-    ) {
-        Ok(_) => log::info!("Initialized Successfully"),
-        Err(_) => panic!("Failed to initialize CAN"),
-    }
-
-    let mut counter = 0;
-
-    loop {
-        // Send a message
-        if counter % 4 == 0 {
-            let frame = CanFrame::new(
-                Id::Extended(ExtendedId::MAX),
-                &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
-            )
-            .unwrap();
-            can.send_message(frame).unwrap();
-            log::info!("Sent message!");
-        }
-
-        // Read the message back (we are in loopback mode)
-        match can.read_message() {
-            Ok(frame) => log::info!("Received frame {:?}", frame),
-            Err(Error::NoMessage) => log::info!("No message to read!"),
-            Err(_) => panic!("Oh no!"),
-        }
-
-        //delay.delay_ms(500);
-        Timer::after_millis(500).await;
-        counter += 1;
-
-    }
-
-    /*
-    let mut counter = 0;
-    loop {
-        counter += 1;
-        log::info!("SPI Tick {}", counter);
-
-        Timer::after_millis(500).await;
-    }
-    */
-}
-
-
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
@@ -286,21 +217,6 @@ async fn main(spawner: Spawner) {
     // LED Control
     let led = Output::new(p.PIN_25, Level::Low);
     unwrap!(spawner.spawn(blinker(led, Duration::from_millis(300))));
-
-
-    /*
-    let pio = p.PIO0;
-
-    let Pio {
-        mut common,
-        irq3,
-        mut sm0,
-        ..
-    } = Pio::new(pio, Irqs);
-
-    setup_pio_task(&mut common, &mut sm0, p.PIN_6, p.PIN_7);
-    spawner.spawn(pio_task_sm0(sm0)).unwrap();
-    */
 
     let cp1 = Flex::new(p.PIN_3);
     let cp2 = Flex::new(p.PIN_6);
@@ -347,7 +263,6 @@ async fn main(spawner: Spawner) {
 
     //panic!("xit app");
 
-    /*
     // CAN is SPI0.
     // 3MHz seems to be the fastest that this runs out of the box.
     let mut config = spi::Config::default();
@@ -358,8 +273,7 @@ async fn main(spawner: Spawner) {
     let spi_bus = Mutex::new(RefCell::new(spi));
     let can_cs = Output::new(p.PIN_17, Level::High);
     let can_reset = Output::new(p.PIN_21, Level::Low);
-    unwrap!(spawner.spawn(canbus(spi_bus, can_cs, can_reset)));
-    */
+    unwrap!(spawner.spawn(can::canbus(spi_bus, can_cs, can_reset)));
 
     let mut tx_en = Output::new(p.PIN_14, Level::Low);
 
