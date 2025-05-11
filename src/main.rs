@@ -47,6 +47,32 @@ bind_interrupts!(struct Irqs {
     //PIO0_IRQ_0 => InterruptHandler<PIO0>;
 });
 
+use core::fmt::{self, Write};
+
+/// A little wrapper that will hex-format its inner byte slice.
+pub struct Hex<'a>(pub &'a [u8]);
+
+impl<'a> fmt::Display for Hex<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for &b in self.0 {
+            // high nibble
+            let hi = b >> 4;
+            let lo = b & 0x0f;
+            f.write_char(nibble_to_hex(hi))?;
+            f.write_char(nibble_to_hex(lo))?;
+        }
+        Ok(())
+    }
+}
+
+fn nibble_to_hex(n: u8) -> char {
+    match n {
+        0..=9  => (b'0' + n) as char,
+        10..=15 => (b'A' + (n - 10)) as char,
+        _       => '?',
+    }
+}
+
 #[embassy_executor::task(pool_size=4)]
 async fn blinker(mut led: Output<'static>, interval: Duration) {
     loop {
@@ -371,17 +397,7 @@ async fn led_grid(mut pin1: Flex<'static>, mut pin2: Flex<'static>, mut pin3: Fl
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
-    let mut flash = embassy_rp::flash::Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH0);
-
-    // Get JEDEC id
-    let jedec = flash.blocking_jedec_id().unwrap();
-    
-    // Get unique id
-    let mut uid = [0; 8];
-    flash.blocking_unique_id(&mut uid).unwrap();
-    
-    // USB?
-    //unwrap!(spawner.spawn(logger_task(p.USB)));
+    // Confiugre USB early
     unwrap!(spawner.spawn(usb::usb_handler(p.USB)));
 
     // LED Control
@@ -432,6 +448,16 @@ async fn main(spawner: Spawner) {
     
     Timer::after_secs(2).await;
 
+    let mut flash = embassy_rp::flash::Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH0);
+
+    // Get JEDEC id
+    let jedec = flash.blocking_jedec_id().unwrap();
+    
+    // Get unique id
+    let mut uid = [0; 8];
+    flash.blocking_unique_id(&mut uid).unwrap();
+    log::info!("JEDEC: {}, UID: {}", jedec, Hex(&uid));
+
     //log::info!("Hello USB");
 
     Timer::after_millis(100).await;
@@ -461,7 +487,7 @@ async fn main(spawner: Spawner) {
     uart.set_baudrate(1_000_000);
     
     // Write A Ping
-    let d1 = [0xff, 0xff, 0xfd, 0x00, 0xfe, 0x03, 0x00, 0x01, 0x31, 0x42];
+    // let d1 = [0xff, 0xff, 0xfd, 0x00, 0xfe, 0x03, 0x00, 0x01, 0x31, 0x42];
     
     //let mut instruction = [0xff, 0xff, 0xfd, 0x00, 0x01,  0x07, 0x00, 0x03, 0x1e, 0x00, 0xff, 0x03, 0x00, 0x00];
     let mut instruction = [0xff, 0xff, 0xfd, 0x00, 0x01,  0x07, 0x00, 0x03, 0x1e, 0x00, 0x0, 0x0, 0x00, 0x00];
@@ -470,7 +496,7 @@ async fn main(spawner: Spawner) {
     instruction[instruction.len() - 2] = (crc & 0xff) as u8;
     instruction[instruction.len() - 1] = ((crc >> 8) & 0xff) as u8;
 
-    log::info!("crc is {:x}", crc);
+    //log::info!("crc is {:x}", crc);
     //tx_en.set_low();
     tx_en.set_high();
     uart.blocking_write(&instruction).unwrap();
@@ -515,7 +541,7 @@ async fn main(spawner: Spawner) {
     let mut counter = 0 as u32;
     loop {
         counter += 1;
-        log::info!("Tick {}", counter);
+        //log::info!("Tick {}", counter);
         //log::info!("jedec id: 0x{:x}", jedec);
         //log::info!("unique id: {:?}", uid);
 
@@ -527,7 +553,7 @@ async fn main(spawner: Spawner) {
         instruction[instruction.len() - 2] = (crc & 0xff) as u8;
         instruction[instruction.len() - 1] = ((crc >> 8) & 0xff) as u8;
     
-        log::info!("crc is {:x}", crc);
+        //log::info!("crc is {:x}", crc);
         //tx_en.set_low();
         tx_en.set_high();
         uart.blocking_write(&instruction).unwrap();
@@ -538,7 +564,7 @@ async fn main(spawner: Spawner) {
 
         let mut read_buf = [0u8; 11];
         if uart.blocking_read(&mut read_buf).is_ok() {
-            log::info!("contents of read are {}", read_buf[0]);
+            //log::info!("contents of read are {}", read_buf[0]);
         } else {
             log::error!("failed to read from UART");
         }
