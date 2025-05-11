@@ -403,11 +403,11 @@ async fn main(spawner: Spawner) {
     spawner.spawn(pio_task_sm0(sm0)).unwrap();
     */
 
-    let mut cp1 = Flex::new(p.PIN_3);
-    let mut cp2 = Flex::new(p.PIN_6);
-    let mut cp3 = Flex::new(p.PIN_7);
-    let mut cp4 = Flex::new(p.PIN_8);
-    let mut cp5 = Flex::new(p.PIN_9);
+    let cp1 = Flex::new(p.PIN_3);
+    let cp2 = Flex::new(p.PIN_6);
+    let cp3 = Flex::new(p.PIN_7);
+    let cp4 = Flex::new(p.PIN_8);
+    let cp5 = Flex::new(p.PIN_9);
 
     unwrap!(spawner.spawn(led_grid(cp1, cp2, cp3, cp4, cp5)));
 

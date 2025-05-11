@@ -6,9 +6,6 @@ use embassy_usb::{
 use embedded_io_async::{ErrorKind, Write};
 use fixed_queue::VecDeque;
 use noline::builder::EditorBuilder;
-use log::{Metadata, Record};
-
-use core::fmt::{self, Pointer};
 
 struct IO<'a, T>
 where
@@ -97,36 +94,6 @@ where
 
     async fn flush(&mut self) -> Result<(), Self::Error> {
         // TODO: Implement me
-        Ok(())
-    }
-}
-
-/*impl<'a, T> log::Log for IO<'a, T>
-where 
-    T: Instance,
-{
-    fn enabled(&self, _metadata: &Metadata) -> bool {
-        true
-    }
-
-    fn log(&self, record: &Record) {
-        let _ = write!(&mut self, "{}\r\n", record.args());
-    }
-
-    fn flush(&self) {}
-}
-*/
-
-impl<'a, T> fmt::Write for IO<'a, T>
-where 
-    T: Instance,
-{
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        let raw_s = s.as_bytes();
-        async {
-            self.stdout.write_packet(raw_s).await;
-        };
-
         Ok(())
     }
 }
