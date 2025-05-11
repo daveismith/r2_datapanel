@@ -101,20 +101,21 @@ where
     }
 }
 
-//impl<'a, T> log::Log for IO<'a, T>
-//where 
-//    T: Instance,
-//{
-//    fn enabled(&self, _metadata: &Metadata) -> bool {
-//        true
-//    }
-//
-//    fn log(&self, record: &Record) {
-//        let _ = write!(&mut self, "{}\r\n", record.args());
-//    }
-//
-//    fn flush(&self) {}
-//}
+/*impl<'a, T> log::Log for IO<'a, T>
+where 
+    T: Instance,
+{
+    fn enabled(&self, _metadata: &Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &Record) {
+        let _ = write!(&mut self, "{}\r\n", record.args());
+    }
+
+    fn flush(&self) {}
+}
+*/
 
 impl<'a, T> fmt::Write for IO<'a, T>
 where 

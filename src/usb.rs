@@ -6,19 +6,15 @@
 // for the basis of this file.
 
 use defmt::panic;
-use embassy_futures::join::{join, join3, join4, join5};
+use embassy_futures::join::join3;
 use embassy_rp::bind_interrupts;
 use embassy_rp::peripherals::USB;
-use embassy_rp::usb::{Driver, Instance, InterruptHandler};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::pipe::Pipe;
-//use embassy_time::Timer;
+use embassy_rp::usb::InterruptHandler;
 use embassy_usb::{
-    class::cdc_acm::{CdcAcmClass, State, ControlChanged, Receiver, Sender},
+    class::cdc_acm::{CdcAcmClass, State},
     driver::EndpointError
 };
 use embassy_usb::{Builder, Config};
-use embassy_usb_logger::UsbLogger;
 
 use crate::noline_async::cli;
 
@@ -66,9 +62,9 @@ pub async fn usb_handler(usb: USB) {
     let mut bos_descriptor = [0; BUF_SIZE_DESCRIPTOR];
     let mut msos_descriptor = [0; BUF_SIZE_DESCRIPTOR];
     let mut control_buf = [0; BUF_SIZE_CONTROL];
-
-    let mut state = State::new();
+    
     let mut logger_state = State::new();
+    let mut state = State::new();
 
     let mut builder = Builder::new(
         driver,
@@ -79,78 +75,35 @@ pub async fn usb_handler(usb: USB) {
         &mut control_buf,
     );
 
-    // Create The Serial Class for the CLI. 
-    let mut serial = CdcAcmClass::new(&mut builder, &mut state, MAX_PACKET_SIZE as u16);
+    let (mut send, mut recv, mut control, log_fut, mut usb_dev) = {
+        // This setups up the various handlers and has to happen inside of this context to declare things with sufficient lifetime &
+        // with the right orders.
+        
+        // Set Up Handling for Serial
+        // Create The Serial Class for the CLI. 
+        let serial = CdcAcmClass::new(&mut builder, &mut state, MAX_PACKET_SIZE as u16);
+        let (send, recv, control) = serial.split_with_control();        
 
-    // Create a class for the logger
-    let logger_class = CdcAcmClass::new(&mut builder, &mut logger_state, MAX_PACKET_SIZE as u16);
+        // Create a class for the logger
+        let logger_class = CdcAcmClass::new(&mut builder, &mut logger_state, MAX_PACKET_SIZE as u16);
 
-    // Creates the logger and returns the logger future
-    // Note: You'll need to use log::info! afterwards instead of info! for this to work (this also applies to all the other log::* macros)
-    let log_fut
-     = embassy_usb_logger::with_class!(1024, log::LevelFilter::Info, logger_class);
-    
-    // Set Up Handling for Serial
-    let (mut send, mut recv, mut control) = serial.split_with_control();        
-    //let (mut send, mut recv) = serial.split();
+        // Creates the logger and returns the logger future
+        // Note: You'll need to use log::info! afterwards instead of info! for this to work (this also applies to all the other log::* macros)
+        let log_fut = embassy_usb_logger::with_class!(1024, log::LevelFilter::Info, logger_class);
 
-    let mut rx_pipe = Pipe::<CriticalSectionRawMutex, MAX_PACKET_SIZE>::new();
-    let mut tx_pipe = Pipe::<CriticalSectionRawMutex, MAX_PACKET_SIZE>::new();
+        let usb_dev = builder.build();
 
-    let (rx_pipe_reader, rx_pipe_writer) = rx_pipe.split();
-    let (tx_pipe_reader, tx_pipe_writer) = tx_pipe.split();
-
-    
-    let usb_reader_fut = async move {
-        recv.wait_connection().await;
-        loop {
-            let mut buf: [u8; MAX_PACKET_SIZE] = [0; MAX_PACKET_SIZE];
-            let len = recv.read_packet(&mut buf).await.unwrap();
-            rx_pipe_writer.write(&buf[0 .. len]).await;
-        }
+        (send, recv, control, log_fut, usb_dev)
     };
 
-    let usb_writer_fut = async {
-        send.wait_connection().await;
-        loop {
-            let mut buf: [u8; MAX_PACKET_SIZE] = [0; MAX_PACKET_SIZE];
-            let len = tx_pipe_reader.read(&mut buf).await;
-            send.write_packet(&mut buf[0..len]).await.unwrap();
-        }
-    };
-
-    let echo_fut = async {
-        loop {
-            let mut buf: [u8; MAX_PACKET_SIZE as usize] = [0; MAX_PACKET_SIZE as usize];
-            let len = rx_pipe_reader.read(&mut buf).await;
-            for i in buf.iter().take(len) {
-                log::info!("data: {:x}", i);
-            }
-            tx_pipe_writer.write(&buf).await;
-
-        }
-    };
-
- 
-    /*let noline_fut = async {
-        serial.wait_connection().await;
-        cli(&mut send, &mut recv, &mut control).await;
-    };*/
-    
-    // Build the builder.
-    let mut usb = builder.build();
+    let noline_fut = cli(&mut send, &mut recv, &mut control);
 
     // Run the USB device.
-    let usb_fut = usb.run();
+    let usb_fut = usb_dev.run();
 
     // Run everything concurrently.
     // If we had made everything `'static` above instead, we could do this using separate tasks instead.
-    join5(usb_fut, log_fut, echo_fut, usb_reader_fut, usb_writer_fut).await;
-    //join(usb_fut, join(log_fut, noline_fut)).await;
-    
-    //join(usb_fut, noline_fut).await;
-    
-    //Figure out how our CLI, which should work with the pipe reader & writer
+    join3(usb_fut, log_fut, noline_fut).await;
 }
 
 struct Disconnected {}
@@ -161,17 +114,5 @@ impl From<EndpointError> for Disconnected {
             EndpointError::BufferOverflow => panic!("Buffer overflow"),
             EndpointError::Disabled => Disconnected {},
         }
-    }
-}
-
-async fn echo<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, Driver<'d, T>>) -> Result<(), Disconnected> {
-    let mut buf = [0; 64];
-    loop {
-        let n = class.read_packet(&mut buf).await?;
-        let data = &buf[..n];
-        for i in data.iter().take(n) {
-            log::info!("data: {:x}", i);
-        }
-        class.write_packet(data).await?;
     }
 }
